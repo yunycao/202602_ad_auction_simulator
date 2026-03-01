@@ -935,6 +935,291 @@ function WhatIfChat({ advertisers }) {
 }
 
 // ─── Main App ───────────────────────────────────────────────────────
+// ─── Tab: Finance Scenario ────────────────────────────────────────────
+const FINANCE_SUB_VERTICALS = {
+  credit_cards: { name: "Credit Cards", avgCPA: 85, trustSensitivity: 0.8, regRisk: 0.6, window: 14 },
+  personal_loans: { name: "Personal Loans", avgCPA: 120, trustSensitivity: 0.9, regRisk: 0.8, window: 21 },
+  insurance: { name: "Insurance", avgCPA: 65, trustSensitivity: 0.85, regRisk: 0.7, window: 30 },
+  investment: { name: "Investment Platforms", avgCPA: 150, trustSensitivity: 0.95, regRisk: 0.9, window: 7 },
+  neobanks: { name: "Neobanks / Fintech", avgCPA: 45, trustSensitivity: 0.6, regRisk: 0.4, window: 3 },
+};
+
+const FINANCE_ALGOS = [
+  { id: "two_tower", name: "Two-Tower Retrieval", precision: 0.72, coldStart: 0.65, coverage: 0.95, latency: 5, compute: 0.1, trust: 0.4, risk: 0.3, color: "#60a5fa" },
+  { id: "gbdt", name: "GBDT Ranker", precision: 0.88, coldStart: 0.45, coverage: 0.78, latency: 12, compute: 0.3, trust: 0.7, risk: 0.65, color: "#16a34a" },
+  { id: "dlrm", name: "DLRM Deep Model", precision: 0.92, coldStart: 0.38, coverage: 0.85, latency: 25, compute: 1.0, trust: 0.75, risk: 0.6, color: "#9333ea" },
+  { id: "bandit", name: "Contextual Bandit", precision: 0.68, coldStart: 0.82, coverage: 0.82, latency: 8, compute: 0.2, trust: 0.5, risk: 0.4, color: "#ea580c" },
+  { id: "hybrid_ensemble", name: "Hybrid Ensemble", precision: 0.94, coldStart: 0.58, coverage: 0.88, latency: 30, compute: 1.4, trust: 0.78, risk: 0.7, color: "#2563eb" },
+  { id: "risk_adjusted", name: "Risk-Adjusted Ranker", precision: 0.90, coldStart: 0.42, coverage: 0.83, latency: 28, compute: 1.2, trust: 0.9, risk: 0.95, color: "#dc2626" },
+];
+
+function simulateFinanceScenario(segment, subVertical, days = 30) {
+  const sv = FINANCE_SUB_VERTICALS[subVertical];
+  const dataDensity = Math.min(1.0, segment.size / 4000000);
+  const warmth = dataDensity * (sv.regRisk < 0.5 ? 0.9 : 0.7); // Proxy for data richness
+
+  return FINANCE_ALGOS.map(algo => {
+    const rng = seededRandom(42 + algo.id.length * 13 + subVertical.length * 7);
+    const baseCTR = segment.avgCTR * algo.precision * (warmth > 0.4 ? 1.1 : algo.coldStart);
+    const trustFactor = 0.6 + 0.4 * algo.trust * sv.trustSensitivity;
+    const windowFactor = Math.min(1, 7 / sv.window);
+    const baseCVR = segment.avgCVR * algo.precision * windowFactor;
+
+    let trust = 0.7, advSat = 0.5, totalRev = 0, totalConv = 0, totalRisk = 0;
+    const daily = [];
+
+    for (let d = 0; d < days; d++) {
+      let learn = 1 + 0.3 * (1 - Math.exp(-d / 10));
+      if (algo.id === "bandit") learn *= 1.15;
+      else if (algo.id === "dlrm") learn *= 1 + 0.1 * Math.min(1, d / 15);
+      else if (algo.id === "hybrid_ensemble") learn *= 1.1;
+
+      const noise = 1 + (rng() - 0.5) * 0.15;
+      const ctr = Math.max(0.002, Math.min(0.12, baseCTR * trustFactor * learn * noise * (0.95 + 0.05 * trust)));
+      const cvr = Math.max(0.001, Math.min(0.08, baseCVR * learn * (1 + (rng() - 0.5) * 0.2)));
+      const clicks = Math.floor(10000 * ctr);
+      const conversions = Math.floor(clicks * cvr);
+      const revenue = conversions * sv.avgCPA;
+      const riskBase = Math.max(0, (1 - algo.risk) * sv.regRisk);
+      const riskInc = Math.floor(clicks * riskBase * 0.02 * (rng() + 0.5));
+      trust = Math.max(0.1, Math.min(1, trust + 0.005 * (cvr / Math.max(baseCVR, 0.001)) - 0.02 * riskInc / Math.max(clicks, 1)));
+      const cpRatio = revenue / Math.max(conversions, 1) / sv.avgCPA;
+      advSat = Math.max(0.1, Math.min(1, advSat + (cpRatio > 0.8 ? 0.02 * (cpRatio - 0.8) : -0.03)));
+      totalRev += revenue; totalConv += conversions; totalRisk += riskInc;
+      daily.push({ day: d + 1, ctr: +ctr.toFixed(5), cvr: +cvr.toFixed(5), revenue: +revenue.toFixed(0), trust: +trust.toFixed(4), advSat: +advSat.toFixed(4), riskInc, conversions });
+    }
+
+    return {
+      ...algo, daily, totalRevenue: +totalRev.toFixed(0), totalConversions: totalConv,
+      avgCTR: +(daily.reduce((s, d) => s + d.ctr, 0) / days).toFixed(5),
+      avgCVR: +(daily.reduce((s, d) => s + d.cvr, 0) / days).toFixed(5),
+      avgCPA: +(totalRev / Math.max(totalConv, 1)).toFixed(0),
+      finalTrust: daily[daily.length - 1]?.trust || 0.5,
+      finalAdvSat: daily[daily.length - 1]?.advSat || 0.5,
+      totalRisk, computeCost30d: +(algo.compute * 10000 * days / 1000).toFixed(1),
+    };
+  });
+}
+
+function scoreAndRankAlgorithms(results) {
+  const maxRev = Math.max(...results.map(r => r.totalRevenue)) || 1;
+  const maxRisk = Math.max(...results.map(r => r.totalRisk)) || 1;
+  const maxEfficiency = Math.max(...results.map(r => r.totalRevenue / Math.max(r.computeCost30d, 0.1))) || 1;
+
+  return results.map(r => {
+    const revScore = r.totalRevenue / maxRev;
+    const riskScore = 1 - r.totalRisk / maxRisk;
+    const qualityScore = r.finalTrust * 0.5 + riskScore * 0.5;
+    const effScore = (r.totalRevenue / Math.max(r.computeCost30d, 0.1)) / maxEfficiency;
+    const overall = revScore * 0.30 + qualityScore * 0.35 + effScore * 0.15 + r.finalAdvSat * 0.20;
+    return { ...r, revScore: +revScore.toFixed(4), qualityScore: +qualityScore.toFixed(4), effScore: +effScore.toFixed(4), overall: +overall.toFixed(4) };
+  }).sort((a, b) => b.overall - a.overall);
+}
+
+function FinanceScenarioTab() {
+  const [subVertical, setSubVertical] = useState("credit_cards");
+  const [segIdx, setSegIdx] = useState(4); // biz_professionals
+  const seg = SEGMENTS[segIdx];
+
+  const ranked = useMemo(() => {
+    const raw = simulateFinanceScenario(seg, subVertical);
+    return scoreAndRankAlgorithms(raw);
+  }, [segIdx, subVertical]);
+
+  const winner = ranked[0];
+  const runnerUp = ranked[1];
+  const sv = FINANCE_SUB_VERTICALS[subVertical];
+
+  // Learning curves for chart
+  const revenueCurveData = useMemo(() =>
+    Array.from({ length: 30 }, (_, i) => {
+      const point = { day: i + 1 };
+      ranked.forEach(r => { point[r.name.split(" ")[0]] = r.daily[i]?.revenue || 0; });
+      return point;
+    }),
+    [ranked]
+  );
+
+  const trustCurveData = useMemo(() =>
+    Array.from({ length: 30 }, (_, i) => {
+      const point = { day: i + 1 };
+      ranked.forEach(r => { point[r.name.split(" ")[0]] = +(r.daily[i]?.trust * 100).toFixed(1) || 50; });
+      return point;
+    }),
+    [ranked]
+  );
+
+  const radarData = useMemo(() =>
+    ranked.slice(0, 4).map(r => ({
+      name: r.name.replace(" Retrieval", "").replace(" Ranker", "").replace(" Deep Model", "").replace("Contextual ", ""),
+      Revenue: +(r.revScore * 100).toFixed(0),
+      Quality: +(r.qualityScore * 100).toFixed(0),
+      Efficiency: +(r.effScore * 100).toFixed(0),
+      "Adv. Sat": +(r.finalAdvSat * 100).toFixed(0),
+    })),
+    [ranked]
+  );
+
+  return (
+    <div>
+      {/* Scenario Header */}
+      <SectionCard title={`Financial Services Scenario: ${sv.name}`} description="30-day simulation comparing 6 recommender algorithms optimized for financial services constraints: trust sensitivity, regulatory risk, long conversion windows, and high CPAs.">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 12 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: "#374151", display: "block", marginBottom: 4 }}>Sub-Vertical</label>
+            <select value={subVertical} onChange={e => setSubVertical(e.target.value)} style={{ width: "100%", padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 6 }}>
+              {Object.entries(FINANCE_SUB_VERTICALS).map(([k, v]) => <option key={k} value={k}>{v.name} (CPA: ${v.avgCPA})</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: "#374151", display: "block", marginBottom: 4 }}>Segment</label>
+            <select value={segIdx} onChange={e => setSegIdx(+e.target.value)} style={{ width: "100%", padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 6 }}>
+              {SEGMENTS.map((s, i) => <option key={s.id} value={i}>{s.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
+          {[
+            { label: "Target CPA", value: `$${sv.avgCPA}` },
+            { label: "Conv. Window", value: `${sv.window}d` },
+            { label: "Trust Sensitivity", value: `${(sv.trustSensitivity * 100).toFixed(0)}%` },
+            { label: "Regulatory Risk", value: `${(sv.regRisk * 100).toFixed(0)}%` },
+            { label: "Algorithms Tested", value: "6" },
+          ].map(m => (
+            <div key={m.label} style={{ background: "#f8fafc", borderRadius: 6, padding: "8px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase" }}>{m.label}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#111827" }}>{m.value}</div>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      {/* Winner Announcement */}
+      <div style={{ background: "linear-gradient(135deg, #0a1a2f, #1d4ed8)", borderRadius: 10, padding: "20px 24px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 11, color: "#93c5fd", textTransform: "uppercase", fontWeight: 600, letterSpacing: 1 }}>Recommended Algorithm</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: "#fff", margin: "4px 0" }}>{winner.name}</div>
+          <div style={{ fontSize: 12, color: "#bfdbfe" }}>
+            Score: {(winner.overall * 100).toFixed(1)}% | Revenue: ${winner.totalRevenue.toLocaleString()} | {winner.totalConversions} conversions | Trust: {(winner.finalTrust * 100).toFixed(0)}%
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 48, fontWeight: 800, color: "#60a5fa", fontFamily: "monospace" }}>#1</div>
+          <div style={{ fontSize: 10, color: "#93c5fd" }}>of 6 algorithms tested</div>
+        </div>
+      </div>
+
+      {/* Rankings Table */}
+      <SectionCard title="Algorithm Rankings" description="Scored by: Revenue (30%), Quality (35%), Efficiency (15%), Advertiser Satisfaction (20%)">
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+              {["Rank", "Algorithm", "Overall", "Revenue", "Quality", "Efficiency", "30d Revenue", "Conversions", "CPA", "Trust", "Risk Inc.", "Latency"].map(h => (
+                <th key={h} style={{ textAlign: h === "Algorithm" ? "left" : "right", padding: "6px 6px", color: "#6b7280", fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ranked.map((r, i) => (
+              <tr key={r.id} style={{ borderBottom: "1px solid #f3f4f6", background: i === 0 ? "#eff6ff" : i === 1 ? "#f8fafc" : "transparent" }}>
+                <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: i === 0 ? "#1d4ed8" : "#374151" }}>#{i + 1}</td>
+                <td style={{ padding: "8px 6px", fontWeight: i === 0 ? 700 : 500 }}>
+                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: r.color, marginRight: 6 }} />
+                  {r.name}
+                </td>
+                <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 700, color: i === 0 ? "#1d4ed8" : "#374151" }}>{(r.overall * 100).toFixed(1)}%</td>
+                <td style={{ padding: "8px 6px", textAlign: "right" }}>{(r.revScore * 100).toFixed(1)}%</td>
+                <td style={{ padding: "8px 6px", textAlign: "right" }}>{(r.qualityScore * 100).toFixed(1)}%</td>
+                <td style={{ padding: "8px 6px", textAlign: "right" }}>{(r.effScore * 100).toFixed(1)}%</td>
+                <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace" }}>${r.totalRevenue.toLocaleString()}</td>
+                <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace" }}>{r.totalConversions}</td>
+                <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace" }}>${r.avgCPA}</td>
+                <td style={{ padding: "8px 6px", textAlign: "right" }}>{(r.finalTrust * 100).toFixed(0)}%</td>
+                <td style={{ padding: "8px 6px", textAlign: "right", color: r.totalRisk > 50 ? "#dc2626" : "#16a34a" }}>{r.totalRisk}</td>
+                <td style={{ padding: "8px 6px", textAlign: "right" }}>{r.latency}ms</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </SectionCard>
+
+      {/* Learning Curves + Radar */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <SectionCard title="30-Day Revenue Learning Curves" description="How each algorithm's revenue evolves as it learns from financial services data">
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={revenueCurveData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="day" tick={{ fontSize: 10 }} label={{ value: "Day", position: "bottom", fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 11 }} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              {ranked.slice(0, 4).map(r => (
+                <Line key={r.id} type="monotone" dataKey={r.name.split(" ")[0]} stroke={r.color} strokeWidth={r.id === winner.id ? 3 : 1.5} dot={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </SectionCard>
+        <SectionCard title="Multi-Objective Comparison (Top 4)" description="Radar chart: Revenue, Quality (trust + risk), Efficiency (rev/compute), Advertiser Satisfaction">
+          <ResponsiveContainer width="100%" height={280}>
+            <RadarChart data={radarData}>
+              <PolarGrid />
+              <PolarAngleAxis dataKey="name" style={{ fontSize: 10 }} />
+              <PolarRadiusAxis angle={30} domain={[0, 100]} style={{ fontSize: 9 }} />
+              {["Revenue", "Quality", "Efficiency", "Adv. Sat"].map((key, i) => (
+                <Radar key={key} name={key} dataKey={key} stroke={["#2563eb", "#16a34a", "#ea580c", "#9333ea"][i]} fill={["#2563eb", "#16a34a", "#ea580c", "#9333ea"][i]} fillOpacity={0.1} />
+              ))}
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </SectionCard>
+      </div>
+
+      {/* Trust Evolution + Detailed Comparison */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <SectionCard title="User Trust Evolution" description="Trust builds with good matches and erodes with risk incidents — critical for financial services retention">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={trustCurveData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} domain={[40, 100]} label={{ value: "Trust %", angle: -90, position: "insideLeft", fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 11 }} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              {ranked.slice(0, 4).map(r => (
+                <Line key={r.id} type="monotone" dataKey={r.name.split(" ")[0]} stroke={r.color} strokeWidth={r.id === winner.id ? 3 : 1.5} dot={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </SectionCard>
+        <SectionCard title="Risk vs Revenue Tradeoff" description="Financial services require balancing revenue generation with regulatory risk">
+          <ResponsiveContainer width="100%" height={260}>
+            <ScatterChart>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="risk" name="Risk Incidents" tick={{ fontSize: 10 }} label={{ value: "Risk Incidents", position: "bottom", fontSize: 10 }} />
+              <YAxis dataKey="revenue" name="Revenue ($)" tick={{ fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v, name) => name === "revenue" ? `$${v.toLocaleString()}` : v} />
+              <Scatter data={ranked.map(r => ({ name: r.name, risk: r.totalRisk, revenue: r.totalRevenue, fill: r.color }))} fill="#2563eb">
+                {ranked.map((r, i) => <Cell key={i} fill={r.color} />)}
+              </Scatter>
+            </ScatterChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+            {ranked.map(r => (
+              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#374151" }}>
+                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: r.color }} />
+                {r.name.split(" ").slice(0, 2).join(" ")}
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      </div>
+
+      {/* Recommendation Box */}
+      <InsightBox type="success" title={`Recommendation: ${winner.name}`} content={`${winner.name} achieves the highest overall score (${(winner.overall * 100).toFixed(1)}%) for ${sv.name} by balancing ${winner.qualityScore > winner.revScore ? "quality (trust + risk management) over raw revenue" : "strong revenue with acceptable risk levels"}. It generated $${winner.totalRevenue.toLocaleString()} over 30 days with ${winner.totalConversions} conversions at $${winner.avgCPA} CPA, maintaining ${(winner.finalTrust * 100).toFixed(0)}% user trust with only ${winner.totalRisk} risk incidents. ${winner.overall - runnerUp.overall < 0.03 ? `Close race with ${runnerUp.name} (gap: ${((winner.overall - runnerUp.overall) * 100).toFixed(1)}pp) — consider A/B testing both.` : `Clear advantage over runner-up ${runnerUp.name} (${((winner.overall - runnerUp.overall) * 100).toFixed(1)}pp lead).`}`} />
+      <InsightBox type="warning" title="Key Insight: Finance Requires Trust-Weighted Optimization" content={`In financial services, the standard revenue-maximizing approach (which would pick ${ranked.sort((a, b) => b.totalRevenue - a.totalRevenue)[0].name}) isn't optimal. Quality scoring (35% weight) captures the reality that a bad financial ad recommendation erodes user trust (${sv.trustSensitivity * 100}% trust sensitivity), increases regulatory risk (${sv.regRisk * 100}% regulatory exposure), and ultimately destroys long-term LTV. The ${sv.window}-day conversion window means short-term CTR optimization misses the full picture — algorithms must balance immediate engagement with downstream conversion quality.`} />
+    </div>
+  );
+}
+
 // ─── Tab: Model Strategy Framework ────────────────────────────────────
 const FRAMEWORK_VERTICALS = {
   ecommerce: { name: "E-Commerce", weights: { revenue: 0.35, experience: 0.30, health: 0.20, compute: 0.15 }, affinity: { two_tower: 0.7, gbdt: 0.9, dlrm: 1.0, bandit: 0.5 } },
@@ -1222,6 +1507,7 @@ export default function App() {
     { id: "cascade", label: "Cascade Ranking" },
     { id: "ecosystem", label: "Ecosystem Impact" },
     { id: "strategy", label: "Model Strategy" },
+    { id: "scenario", label: "Finance Scenario" },
     { id: "segments", label: "Segments" },
     { id: "whatif", label: "What-If Chat" },
   ];
@@ -1233,7 +1519,7 @@ export default function App() {
         <div style={{ marginBottom: 24 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: "#111827", margin: 0 }}>Ad Auction Simulator</h1>
           <p style={{ fontSize: 12, color: "#6b7280", margin: "4px 0 0" }}>
-            GSP/VCG Engine · Budget Pacing · Quality Feedback · Thompson Sampling · Cascade Ranking · Model Strategy Framework · LLM What-If
+            GSP/VCG Engine · Budget Pacing · Quality Feedback · Thompson Sampling · Cascade Ranking · Model Strategy · Finance Scenario · LLM What-If
           </p>
         </div>
         <TabBar tabs={tabs} active={tab} onChange={setTab} />
@@ -1244,6 +1530,7 @@ export default function App() {
         {tab === "cascade" && <CascadeRankingTab advertisers={advertisers} />}
         {tab === "ecosystem" && <EcosystemImpactTab advertisers={advertisers} />}
         {tab === "strategy" && <ModelStrategyTab />}
+        {tab === "scenario" && <FinanceScenarioTab />}
         {tab === "segments" && <SegmentExplorer />}
         {tab === "whatif" && <WhatIfChat advertisers={advertisers} />}
       </div>

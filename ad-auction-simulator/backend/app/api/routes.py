@@ -42,6 +42,7 @@ from ..recommender.model_framework import (
     compute_portfolio_allocation, run_framework_analysis,
     score_model_for_context,
 )
+from ..recommender.scenario_finance import run_finance_scenario, FINANCE_SUB_VERTICALS
 
 router = APIRouter(prefix="/api")
 
@@ -120,6 +121,13 @@ class FrameworkRequest(BaseModel):
 class FrameworkAnalysisRequest(BaseModel):
     verticals: Optional[list] = None
     lifecycle_stages: Optional[list] = None
+
+
+class FinanceScenarioRequest(BaseModel):
+    segment_id: str = "biz_professionals"
+    sub_vertical: str = "credit_cards"
+    days: int = 30
+    daily_impressions: int = 10000
 
 
 # ─── Core Endpoints ──────────────────────────────────────────────
@@ -794,6 +802,42 @@ def framework_lifecycles():
             "model_preference": lc.model_preference,
         }
         for stage, lc in LIFECYCLE_STAGES.items()
+    }
+
+
+# ─── FINANCIAL SERVICES SCENARIO ─────────────────────────────────
+@router.post("/scenario/finance")
+def finance_scenario(req: FinanceScenarioRequest):
+    """
+    Run a 30-day financial services scenario comparing 6 recommender algorithms.
+
+    Simulates realistic financial ad delivery with trust dynamics,
+    regulatory risk, and long conversion windows. Returns ranked
+    algorithm recommendations with detailed daily metrics.
+    """
+    if req.sub_vertical not in FINANCE_SUB_VERTICALS:
+        raise HTTPException(
+            400,
+            f"Unknown sub-vertical: {req.sub_vertical}. "
+            f"Options: {list(FINANCE_SUB_VERTICALS.keys())}",
+        )
+    return run_finance_scenario(
+        segment_id=req.segment_id,
+        sub_vertical=req.sub_vertical,
+        days=req.days,
+        daily_impressions=req.daily_impressions,
+    )
+
+
+@router.get("/scenario/finance/sub-verticals")
+def finance_sub_verticals():
+    """Return all financial services sub-vertical definitions."""
+    return {
+        k: {"name": v["name"], "avg_cpa": v["avg_cpa"],
+             "trust_sensitivity": v["trust_sensitivity"],
+             "regulatory_risk": v["regulatory_risk"],
+             "conversion_window_days": v["conversion_window_days"]}
+        for k, v in FINANCE_SUB_VERTICALS.items()
     }
 
 

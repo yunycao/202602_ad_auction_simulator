@@ -9,8 +9,8 @@ Built as a production-grade reference architecture for ad monetization systems, 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    React Frontend                        │
-│  Dashboard · Pacing · Quality Feedback · Explore/Exploit │
-│  Cascade · Ecosystem · Model Strategy · What-If Chat     │
+│  Dashboard · Pacing · Quality · Explore · Cascade         │
+│  Ecosystem · Model Strategy · Finance Scenario · What-If  │
 └──────────────────────┬──────────────────────────────────┘
                        │ REST API
 ┌──────────────────────▼──────────────────────────────────┐
@@ -53,6 +53,9 @@ Three-stage ranking pipeline (Two-Tower retrieval → DLRM ranking → business 
 
 ### Model Strategy Framework
 Multi-objective model selection framework that jointly optimizes revenue, user experience, advertiser health, and compute cost across segment-vertical-lifecycle contexts. Features vertical-specific objective weights (6 verticals), lifecycle-aware exploration budgets (4 stages), and portfolio-level allocation with primary/secondary/exploration traffic splits. Answers: "Which model architecture should serve which context, and how should that change over time?"
+
+### Financial Services Scenario Simulation
+End-to-end scenario comparing 6 recommender algorithms (Two-Tower, GBDT, DLRM, Contextual Bandit, Hybrid Ensemble, Risk-Adjusted Ranker) for financial advertising across 5 sub-verticals (Credit Cards, Personal Loans, Insurance, Investment Platforms, Neobanks). 30-day simulation with trust evolution, risk incident tracking, and domain-specific multi-objective scoring (revenue 30%, quality/trust 35%, efficiency 15%, advertiser satisfaction 20%). Demonstrates that the revenue-maximizing algorithm is NOT optimal for finance — trust-weighted optimization selects a different winner.
 
 ### Ecosystem Impact Analysis
 Holistic view of how all mechanisms interact. Understanding these mechanism interactions and their equilibrium properties is what distinguishes systems-level thinking from component-level optimization.
@@ -104,6 +107,8 @@ With the backend running, visit http://localhost:8000/docs for interactive Swagg
 | `/api/framework/analysis` | POST | Full framework analysis across all contexts |
 | `/api/framework/verticals` | GET | Vertical definitions with strategy weights |
 | `/api/framework/lifecycles` | GET | Lifecycle stage definitions |
+| `/api/scenario/finance` | POST | Run 30-day finance algorithm comparison |
+| `/api/scenario/finance/sub-verticals` | GET | Finance sub-vertical definitions |
 | `/api/sweep/reserve` | POST | Reserve price sensitivity analysis |
 | `/api/whatif` | POST | Natural-language what-if query (Claude) |
 
@@ -138,17 +143,18 @@ ad-auction-simulator/
 │   │   │   ├── simulator.py         # Model performance simulation
 │   │   │   ├── router.py            # Segment-to-model routing
 │   │   │   ├── bandit.py            # Thompson Sampling multi-armed bandit
-│   │   │   └── model_framework.py   # Multi-objective model strategy framework
+│   │   │   ├── model_framework.py   # Multi-objective model strategy framework
+│   │   │   └── scenario_finance.py  # Financial services scenario simulation
 │   │   ├── llm/
 │   │   │   ├── agent.py             # Claude tool-use agent
 │   │   │   └── prompts.py           # System prompt & tool definitions
 │   │   └── api/
-│   │       └── routes.py            # REST endpoints (17 endpoints)
+│   │       └── routes.py            # REST endpoints (23 endpoints)
 │   ├── tests/
 │   │   └── test_auction.py          # Unit tests
 │   └── requirements.txt
 ├── frontend/
-│   ├── AdAuctionSimulator.jsx       # React app (8 tabs, 1000+ lines)
+│   ├── AdAuctionSimulator.jsx       # React app (10 tabs, 1500+ lines)
 │   ├── src/main.jsx                 # Entry point
 │   ├── index.html
 │   ├── vite.config.js
@@ -174,6 +180,9 @@ ad-auction-simulator/
 
 ### Model Strategy Framework
 "Model selection isn't a static routing decision — it's a multi-objective optimization problem across segment data density, vertical-specific objectives, and advertiser lifecycle stage. My framework jointly optimizes revenue, user experience, advertiser health, and compute cost using vertical-specific weights, then allocates traffic across a portfolio of primary/secondary/exploration models. New advertisers get 2-3x more exploration traffic. Finance verticals favor GBDT precision. Context-aware routing captures 15-40% more revenue vs one-size-fits-all selection."
+
+### Financial Services Scenario
+"In financial services, the revenue-maximizing algorithm (DLRM) isn't the optimal choice. A 30-day simulation across 5 sub-verticals — credit cards, personal loans, insurance, investment platforms, neobanks — shows that the Risk-Adjusted Ranker wins by maintaining 87% user trust with only 3 risk incidents, while DLRM generates more raw revenue but at 78% trust and 7 risk incidents. With 35% quality weight reflecting the reality that a bad financial ad destroys months of trust-building, the multi-objective scoring function correctly identifies that trust preservation dominates short-term revenue in regulated verticals."
 
 ### The Synthesis
 "These mechanisms — adversarial-robust pacing, quality feedback, exploration, latency-aware cascading, and multi-objective model orchestration — interact in non-obvious ways. Budget pacing amplifies quality feedback loops. Cascade latency budgets constrain model complexity. Adversarial behavior forces pricing randomization. The model strategy framework orchestrates all of this at a portfolio level, balancing revenue, user experience, advertiser health, and compute cost across segment-vertical-lifecycle contexts."
