@@ -2,7 +2,7 @@
 
 A full-stack simulation of a large-scale ad auction system featuring GSP/VCG mechanisms, budget pacing with adversarial robustness, quality feedback loops, Thompson Sampling exploration-exploitation, cascade ranking with latency-to-conversion analysis, multi-objective model strategy framework, and Claude-powered natural-language what-if analysis.
 
-Built as a production-grade reference architecture for ad monetization systems, covering auction theory, adversarial dynamics, and system equilibrium.
+Built as a prototype architecture for ad monetization systems, covering auction theory, adversarial dynamics, and system equilibrium.
 
 ## Architecture
 
