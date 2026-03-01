@@ -64,9 +64,9 @@ Claude API with tool-use for natural-language queries about pacing dynamics, qua
 
 **New to the project?** Explore without running code:
 
-- **([DEMO.md](https://github.com/yunycao/202602_ad_auction_simulator/blob/main/ad-auction-simulator/DEMO.md))** — Real data, auction tables, analysis examples
-- **[VISUAL_DEMO.md](VISUAL_DEMO.md)** — Dashboard UI mockups with all tabs
-- **[Ad_Auction_Simulator.pptx](Ad_Auction_Simulator.pptx)** — Simulator demo with model strategy
+- **[DEMO.md](https://github.com/yunycao/202602_ad_auction_simulator/blob/main/ad-auction-simulator/DEMO.md)** — Real data, auction tables, analysis examples
+- **[VISUAL_DEMO.md](https://github.com/yunycao/202602_ad_auction_simulator/blob/main/ad-auction-simulator/VISUAL_DEMO.md)** — Dashboard UI mockups with all tabs
+- **[Ad_Auction_Simulator.pptx](https://github.com/yunycao/202602_ad_auction_simulator/blob/main/Ad_Auction_Simulator_Dashboard.pptx)** — Simulator demo with model strategy
 
 ## Quick Start
 
