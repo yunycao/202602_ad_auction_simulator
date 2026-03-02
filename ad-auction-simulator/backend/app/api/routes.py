@@ -43,6 +43,7 @@ from ..recommender.model_framework import (
     score_model_for_context,
 )
 from ..recommender.scenario_finance import run_finance_scenario, FINANCE_SUB_VERTICALS
+from ..recommender.ads_ranking_model import run_ablation_study
 
 router = APIRouter(prefix="/api")
 
@@ -128,6 +129,14 @@ class FinanceScenarioRequest(BaseModel):
     sub_vertical: str = "credit_cards"
     days: int = 30
     daily_impressions: int = 10000
+
+
+class AdsRankingRequest(BaseModel):
+    segment_id: str = "young_tech"
+    hour: int = 14
+    num_candidates: int = 50
+    slots: int = 8
+    diversity_weight: float = 0.1
 
 
 # ─── Core Endpoints ──────────────────────────────────────────────
@@ -926,3 +935,42 @@ async def whatif_query(req: WhatIfRequest):
             503,
             f"LLM agent not available: {e}. Set ANTHROPIC_API_KEY env var.",
         )
+
+
+# ─── Ads Ranking Model Endpoints ───────────────────────────────────
+
+@router.post("/ads-ranking/simulate")
+def ads_ranking_simulate(req: AdsRankingRequest):
+    """
+    Run the full ads ranking pipeline with ablation study.
+    Compares Full Model vs No Calibration vs Single-Task vs No Cross-Features vs Random.
+    """
+    seg = get_segment(req.segment_id)
+    if not seg:
+        raise HTTPException(404, f"Segment {req.segment_id} not found")
+    return run_ablation_study(
+        _advertisers, seg,
+        hour=req.hour,
+        slots=req.slots,
+        num_candidates=req.num_candidates,
+        diversity_weight=req.diversity_weight,
+    )
+
+
+@router.post("/ads-ranking/features")
+def ads_ranking_features(req: AdsRankingRequest):
+    """Return feature importance analysis for the full model variant."""
+    seg = get_segment(req.segment_id)
+    if not seg:
+        raise HTTPException(404, f"Segment {req.segment_id} not found")
+    result = run_ablation_study(
+        _advertisers, seg, hour=req.hour, slots=req.slots,
+        num_candidates=req.num_candidates, diversity_weight=req.diversity_weight,
+    )
+    full = result["variants"].get("full", {})
+    return {
+        "segment_id": req.segment_id,
+        "hour": req.hour,
+        "feature_importance": full.get("feature_importance", {}),
+        "top_ads": full.get("ranked_ads", [])[:10],
+    }

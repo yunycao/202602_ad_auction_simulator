@@ -112,7 +112,7 @@ ALGORITHMS = [
     ),
     AlgorithmSpec(
         "dlrm", "DLRM Deep Model",
-        "Facebook's Deep Learning Recommendation Model. Best precision on dense features but expensive and cold-start weak.",
+        "Deep Learning Recommendation Model (DLRM). Best precision on dense features but expensive and cold-start weak.",
         latency_ms=25, precision_base=0.92, cold_start_factor=0.38,
         coverage=0.85, compute_cost=1.0, trust_sensitivity=0.75,
         risk_awareness=0.6, ensemble_capable=True,

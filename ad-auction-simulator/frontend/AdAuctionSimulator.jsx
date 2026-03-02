@@ -1220,6 +1220,386 @@ function FinanceScenarioTab() {
   );
 }
 
+// ─── Tab: Ads Ranking Model ────────────────────────────────────────────
+
+const ADS_RANKING_VARIANTS = [
+  { id: "full", name: "Full Model", color: "#2563eb", desc: "All features + multi-task + calibration" },
+  { id: "no_calibration", name: "No Calibration", color: "#ea580c", desc: "Raw scores, no Platt scaling" },
+  { id: "single_task", name: "Single-Task", color: "#16a34a", desc: "pCTR only, no auxiliary tasks" },
+  { id: "no_cross_features", name: "No Cross-Features", color: "#7c3aed", desc: "Additive features only" },
+  { id: "random", name: "Random Baseline", color: "#9ca3af", desc: "Random ranking reference" },
+];
+
+const FEATURE_NAMES_SHORT = {
+  bid_competitiveness: "Bid Competitiveness",
+  quality_score: "Quality Score",
+  historical_ctr: "Historical CTR",
+  segment_affinity: "Segment Affinity",
+  "vertical×segment_cross": "Vertical×Segment",
+  time_relevance: "Time Relevance",
+  budget_utilization: "Budget Utilization",
+  advertiser_tenure: "Advertiser Tenure",
+  "vertical×hour_cross": "Vertical×Hour",
+  ad_freshness: "Ad Freshness",
+  "segment×hour_cross": "Segment×Hour",
+  bid_to_reserve_ratio: "Bid/Reserve Ratio",
+};
+
+function simulateAdsRanking(advertisers, segment, hour, seed = 42) {
+  const rng = seededRandom(seed + hour * 17);
+  const eligible = advertisers.filter(a => a.segments.includes(segment.id)).slice(0, 50);
+  if (eligible.length < 20) eligible.push(...advertisers.slice(0, 30));
+  const candidates = eligible.slice(0, 50);
+  const medianBid = [...candidates].sort((a, b) => a.bid - b.bid)[Math.floor(candidates.length / 2)]?.bid || 2;
+  const hourMult = [0.30,0.20,0.15,0.12,0.10,0.18,0.40,0.65,0.82,0.90,0.88,0.85,0.78,0.75,0.80,0.85,0.90,0.95,1.0,0.98,0.92,0.80,0.60,0.42][hour % 24];
+
+  function runVariant(variantId) {
+    const predictions = candidates.map(a => {
+      const r = seededRandom(seed + a.id.length * 7 + hour + variantId.length);
+      const bidComp = Math.min(2.0, a.bid / Math.max(medianBid, 0.01));
+      const affinity = a.segments.includes(segment.id) ? 0.9 : 0.4 + r() * 0.2;
+      const budgetUtil = Math.min(1.0, (hour / 24) * 0.7 + r() * 0.2);
+      const tenure = 0.3 + a.quality * 0.5 + r() * 0.2;
+      const freshness = 0.4 + a.quality * 0.3 + r() * 0.3;
+
+      // Dense signal
+      let denseSignal = bidComp * 0.20 + a.quality * 0.25 + segment.avgCTR * 15 * (0.6 + 0.8 * a.quality)
+        + affinity * 0.15 + hourMult * 0.10 - budgetUtil * 0.05 + tenure * 0.08 + freshness * 0.05;
+
+      // Cross-feature signal
+      const crossSig = variantId === "no_cross_features" ? 0 : (r() - 0.3) * 0.15;
+      const baseScore = denseSignal + crossSig;
+
+      // pCTR
+      let rawCtr = 1 / (1 + Math.exp(-(baseScore * 0.8 + segment.avgCTR * 8 * (0.6 + 0.8 * a.quality))));
+      rawCtr = Math.max(0.001, Math.min(0.15, rawCtr));
+
+      let rawCvr, rawEng, rawNeg;
+      if (variantId === "random") {
+        return { id: a.id, name: a.name, vertical: a.vertical, bid: a.bid, quality: a.quality,
+          pCtr: r() * 0.08, pCvr: r() * 0.03, pEng: r(), pNeg: r() * 0.15,
+          ecpm: r() * 5, qualityMult: 1, calAdj: 0 };
+      }
+      if (variantId === "single_task") {
+        rawCvr = rawCtr * 0.3 + (r() - 0.5) * 0.01;
+        rawEng = 0.5;
+        rawNeg = 0.05;
+      } else {
+        rawCvr = Math.max(0.0005, Math.min(0.08, (1 / (1 + Math.exp(-baseScore * 0.5))) * 0.4));
+        rawEng = 1 / (1 + Math.exp(-(a.quality * 0.4 + affinity * 0.3 + freshness * 0.2 + crossSig * 0.3)));
+        rawNeg = (1 / (1 + Math.exp(-((1 - a.quality) * 0.5 + (1 - affinity) * 0.3 + budgetUtil * 0.1)))) * 0.15;
+      }
+
+      // Calibration
+      let pCtr = rawCtr, calAdj = 0;
+      if (variantId !== "no_calibration") {
+        const rawLogit = Math.log(rawCtr / (1 - rawCtr));
+        const targetLogit = Math.log(segment.avgCTR / (1 - segment.avgCTR));
+        pCtr = 1 / (1 + Math.exp(-(rawLogit * 0.7 + targetLogit * 0.3)));
+        calAdj = pCtr - rawCtr;
+      }
+      let pCvr = rawCvr;
+      if (variantId !== "no_calibration") {
+        const rLogit = Math.log(Math.max(rawCvr, 1e-6) / (1 - Math.max(rawCvr, 1e-6)));
+        const tLogit = Math.log(Math.max(segment.avgCVR * 0.5, 1e-6) / (1 - Math.max(segment.avgCVR * 0.5, 1e-6)));
+        pCvr = 1 / (1 + Math.exp(-(rLogit * 0.7 + tLogit * 0.3)));
+      }
+
+      const engBonus = rawEng * 0.15;
+      const negPenalty = rawNeg * (-0.30);
+      const qualityMult = Math.max(0.5, 1.0 + engBonus + negPenalty);
+      const ecpm = a.bid * pCtr * Math.max(pCvr, 0.01) * qualityMult * 1000;
+
+      return { id: a.id, name: a.name, vertical: a.vertical, bid: a.bid, quality: a.quality,
+        pCtr, pCvr, pEng: rawEng, pNeg: rawNeg, ecpm, qualityMult, calAdj };
+    });
+
+    // Quality filter + sort by eCPM
+    const filtered = predictions.filter(p => p.qualityMult >= 0.6 && p.pNeg < 0.10)
+      .sort((a, b) => b.ecpm - a.ecpm);
+
+    // Diversity: max 3 per vertical
+    const vertCounts = {};
+    const diversified = [];
+    for (const p of filtered) {
+      const c = vertCounts[p.vertical] || 0;
+      if (c < 3) { diversified.push(p); vertCounts[p.vertical] = c + 1; }
+    }
+    const winners = diversified.slice(0, 8).map((w, i) => ({ ...w, rank: i + 1 }));
+
+    const totalRev = winners.reduce((s, w) => s + w.ecpm / 1000, 0);
+    const avgCtr = winners.length ? winners.reduce((s, w) => s + w.pCtr, 0) / winners.length : 0;
+    const avgCvr = winners.length ? winners.reduce((s, w) => s + w.pCvr, 0) / winners.length : 0;
+    const avgEcpm = winners.length ? winners.reduce((s, w) => s + w.ecpm, 0) / winners.length : 0;
+    const avgEng = winners.length ? winners.reduce((s, w) => s + w.pEng, 0) / winners.length : 0;
+    const avgNeg = winners.length ? winners.reduce((s, w) => s + w.pNeg, 0) / winners.length : 0;
+    const userSat = avgEng * 0.7 - avgNeg * 0.3;
+    const calErr = winners.length ? winners.reduce((s, w) => s + Math.abs(w.calAdj), 0) / winners.length : 0;
+    const vCounts = {};
+    winners.forEach(w => vCounts[w.vertical] = (vCounts[w.vertical] || 0) + 1);
+    const hhi = Object.values(vCounts).reduce((s, c) => s + (c / winners.length) ** 2, 0);
+
+    // Calibration curve
+    const sorted = [...predictions].sort((a, b) => a.pCtr - b.pCtr);
+    const binSize = Math.max(1, Math.floor(sorted.length / 8));
+    const calCurve = [];
+    for (let i = 0; i < sorted.length; i += binSize) {
+      const bucket = sorted.slice(i, i + binSize);
+      const avgPred = bucket.reduce((s, p) => s + p.pCtr, 0) / bucket.length;
+      const avgObs = bucket.reduce((s, p) => s + p.pCtr * (0.85 + 0.3 * p.qualityMult), 0) / bucket.length;
+      calCurve.push({ predicted: avgPred, observed: avgObs });
+    }
+
+    return { winners, totalRev, avgCtr, avgCvr, avgEcpm, userSat, avgNeg, calErr, diversity: 1 - hhi, calCurve, allPredictions: predictions };
+  }
+
+  const variants = {};
+  let randomRev = 0;
+  for (const v of ADS_RANKING_VARIANTS) {
+    variants[v.id] = runVariant(v.id);
+    if (v.id === "random") randomRev = variants[v.id].totalRev;
+  }
+  // Revenue lift vs random
+  for (const v of ADS_RANKING_VARIANTS) {
+    variants[v.id].liftVsRandom = randomRev > 0 ? ((variants[v.id].totalRev / randomRev - 1) * 100) : 0;
+  }
+
+  // Feature importance (simulated SHAP)
+  const importanceBase = {
+    bid_competitiveness: 0.18, quality_score: 0.16, historical_ctr: 0.14,
+    segment_affinity: 0.12, "vertical×segment_cross": 0.10, time_relevance: 0.07,
+    budget_utilization: 0.06, advertiser_tenure: 0.05, "vertical×hour_cross": 0.04,
+    ad_freshness: 0.03, "segment×hour_cross": 0.03, bid_to_reserve_ratio: 0.02,
+  };
+  const r2 = seededRandom(seed + 99);
+  const importance = Object.fromEntries(
+    Object.entries(importanceBase).map(([k, v]) => [k, Math.max(0, v + (r2() - 0.5) * 0.03)])
+  );
+  const impTotal = Object.values(importance).reduce((s, v) => s + v, 0);
+  Object.keys(importance).forEach(k => importance[k] = importance[k] / impTotal);
+
+  // Revenue waterfall
+  const waterfall = [
+    { stage: "Random Baseline", revenue: variants.random.totalRev, incremental: 0, color: "#9ca3af" },
+    { stage: "+ Dense Features", revenue: variants.no_cross_features.totalRev, incremental: variants.no_cross_features.totalRev - variants.random.totalRev, color: "#2563eb" },
+    { stage: "+ Cross-Features", revenue: variants.single_task.totalRev, incremental: variants.single_task.totalRev - variants.no_cross_features.totalRev, color: "#7c3aed" },
+    { stage: "+ Multi-Task", revenue: variants.no_calibration.totalRev, incremental: variants.no_calibration.totalRev - variants.single_task.totalRev, color: "#16a34a" },
+    { stage: "+ Calibration", revenue: variants.full.totalRev, incremental: variants.full.totalRev - variants.no_calibration.totalRev, color: "#ea580c" },
+  ];
+
+  return { variants, importance, waterfall };
+}
+
+function AdsRankingTab() {
+  const advertisers = useMemo(() => generateAdvertisers(80, 42), []);
+  const [selectedSegment, setSelectedSegment] = useState(SEGMENTS[0]);
+  const [hour, setHour] = useState(14);
+
+  const result = useMemo(() => simulateAdsRanking(advertisers, selectedSegment, hour), [advertisers, selectedSegment, hour]);
+  const { variants, importance, waterfall } = result;
+  const full = variants.full;
+
+  // Feature importance data for horizontal bar chart
+  const featureData = Object.entries(importance)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => ({ name: FEATURE_NAMES_SHORT[k] || k, importance: +(v * 100).toFixed(1) }));
+
+  // Ablation comparison table data
+  const ablationData = ADS_RANKING_VARIANTS.map(v => {
+    const d = variants[v.id];
+    return { ...v, revenue: d.totalRev, avgCtr: d.avgCtr, avgCvr: d.avgCvr, userSat: d.userSat, negRate: d.avgNeg, calErr: d.calErr, lift: d.liftVsRandom, diversity: d.diversity };
+  });
+
+  // Multi-task distribution (top 8 ranked ads from full model)
+  const multiTaskData = full.winners.slice(0, 8).map(w => ({
+    name: w.name.split(" ").slice(0, 2).join(" "),
+    pCTR: +(w.pCtr * 100).toFixed(2),
+    pCVR: +(w.pCvr * 100).toFixed(2),
+    Engagement: +(w.pEng * 100).toFixed(1),
+    Negative: +(w.pNeg * 100).toFixed(1),
+  }));
+
+  // Calibration curves: full vs no_calibration
+  const calFull = full.calCurve;
+  const calNoCal = variants.no_calibration.calCurve;
+  const calData = calFull.map((pt, i) => ({
+    predicted: +(pt.predicted * 100).toFixed(2),
+    "Full Model": +(pt.observed * 100).toFixed(2),
+    "No Calibration": calNoCal[i] ? +(calNoCal[i].observed * 100).toFixed(2) : 0,
+    "Perfect": +(pt.predicted * 100).toFixed(2),
+  }));
+
+  // eCPM vs Quality scatter
+  const scatterData = full.allPredictions.slice(0, 40).map(p => ({
+    ecpm: +p.ecpm.toFixed(2), quality: +p.quality.toFixed(2), vertical: p.vertical,
+    name: p.name, fill: p.rank > 0 ? "#2563eb" : "#d1d5db",
+  }));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Controls */}
+      <SectionCard title="Ads Ranking Model Configuration" description="Production-style multi-task ranking pipeline: Feature Engineering → Multi-Task Prediction → Calibration → eCPM Ranking → Quality Filter">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: "#374151", display: "block", marginBottom: 4 }}>User Segment</label>
+            <select value={selectedSegment.id} onChange={e => setSelectedSegment(SEGMENTS.find(s => s.id === e.target.value))} style={{ width: "100%", padding: "6px 8px", fontSize: 12, border: "1px solid #d1d5db", borderRadius: 6 }}>
+              {SEGMENTS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: "#374151", display: "block", marginBottom: 4 }}>Hour of Day: {hour}:00</label>
+            <input type="range" min="0" max="23" value={hour} onChange={e => setHour(+e.target.value)} style={{ width: "100%" }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {["Feature Eng", "Multi-Task", "Calibration", "eCPM Rank", "Quality Filter"].map((stage, i) => (
+              <React.Fragment key={stage}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: "#fff", background: ["#2563eb", "#7c3aed", "#ea580c", "#16a34a", "#0891b2"][i], padding: "3px 8px", borderRadius: 4 }}>{stage}</span>
+                {i < 4 && <span style={{ fontSize: 12, color: "#d1d5db" }}>→</span>}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* Ablation Results Table */}
+      <SectionCard title="Ablation Study Results" description="Component-level impact analysis: each variant removes one model component to measure its contribution">
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+              <th style={{ textAlign: "left", padding: "6px 8px" }}>Variant</th>
+              <th style={{ textAlign: "right", padding: "6px 8px" }}>Revenue</th>
+              <th style={{ textAlign: "right", padding: "6px 8px" }}>Avg CTR</th>
+              <th style={{ textAlign: "right", padding: "6px 8px" }}>Avg CVR</th>
+              <th style={{ textAlign: "right", padding: "6px 8px" }}>User Sat.</th>
+              <th style={{ textAlign: "right", padding: "6px 8px" }}>Neg Rate</th>
+              <th style={{ textAlign: "right", padding: "6px 8px" }}>Cal Error</th>
+              <th style={{ textAlign: "right", padding: "6px 8px" }}>Diversity</th>
+              <th style={{ textAlign: "right", padding: "6px 8px", fontWeight: 700 }}>Lift vs Random</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ablationData.map((v, i) => (
+              <tr key={v.id} style={{ borderBottom: "1px solid #f3f4f6", background: i === 0 ? "#eff6ff" : "transparent" }}>
+                <td style={{ padding: "6px 8px" }}>
+                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: v.color, marginRight: 6 }} />
+                  <span style={{ fontWeight: i === 0 ? 600 : 400 }}>{v.name}</span>
+                </td>
+                <td style={{ textAlign: "right", padding: "6px 8px", fontFamily: "monospace" }}>${v.revenue.toFixed(2)}</td>
+                <td style={{ textAlign: "right", padding: "6px 8px" }}>{(v.avgCtr * 100).toFixed(2)}%</td>
+                <td style={{ textAlign: "right", padding: "6px 8px" }}>{(v.avgCvr * 100).toFixed(3)}%</td>
+                <td style={{ textAlign: "right", padding: "6px 8px" }}>{v.userSat.toFixed(3)}</td>
+                <td style={{ textAlign: "right", padding: "6px 8px" }}>{(v.negRate * 100).toFixed(1)}%</td>
+                <td style={{ textAlign: "right", padding: "6px 8px" }}>{(v.calErr * 100).toFixed(3)}%</td>
+                <td style={{ textAlign: "right", padding: "6px 8px" }}>{(v.diversity * 100).toFixed(0)}%</td>
+                <td style={{ textAlign: "right", padding: "6px 8px", fontWeight: 700, color: v.lift > 0 ? "#16a34a" : "#dc2626" }}>
+                  {v.lift > 0 ? "+" : ""}{v.lift.toFixed(1)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </SectionCard>
+
+      {/* Feature Importance + Revenue Waterfall */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <SectionCard title="Feature Importance (SHAP-Style)" description="Contribution of each feature to the final eCPM score">
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={featureData} layout="vertical" margin={{ left: 100 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis type="number" tick={{ fontSize: 10 }} label={{ value: "Importance %", position: "bottom", fontSize: 10 }} />
+              <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={95} />
+              <Tooltip contentStyle={{ fontSize: 11 }} formatter={v => `${v}%`} />
+              <Bar dataKey="importance" fill="#2563eb" radius={[0, 4, 4, 0]}>
+                {featureData.map((_, i) => <Cell key={i} fill={i < 4 ? "#2563eb" : i < 8 ? "#60a5fa" : "#93c5fd"} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </SectionCard>
+
+        <SectionCard title="Revenue Waterfall" description="Incremental revenue contribution of each model component">
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={waterfall}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="stage" tick={{ fontSize: 9 }} angle={-15} />
+              <YAxis tick={{ fontSize: 10 }} label={{ value: "Revenue ($)", angle: -90, position: "insideLeft", fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v, name) => name === "incremental" ? `+$${v.toFixed(2)}` : `$${v.toFixed(2)}`} />
+              <Bar dataKey="revenue" name="Cumulative Revenue">
+                {waterfall.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+            {waterfall.filter(w => w.incremental !== 0).map(w => (
+              <div key={w.stage} style={{ fontSize: 10, color: "#374151" }}>
+                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: w.color, marginRight: 4 }} />
+                {w.stage}: <strong style={{ color: w.incremental > 0 ? "#16a34a" : "#dc2626" }}>+${w.incremental.toFixed(2)}</strong>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      </div>
+
+      {/* Calibration + Multi-Task */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <SectionCard title="Calibration Reliability Diagram" description="Predicted CTR vs observed CTR — perfect calibration follows the diagonal">
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={calData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="predicted" tick={{ fontSize: 10 }} label={{ value: "Predicted CTR %", position: "bottom", fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} label={{ value: "Observed CTR %", angle: -90, position: "insideLeft", fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 11 }} />
+              <Line type="monotone" dataKey="Perfect" stroke="#d1d5db" strokeDasharray="5 5" strokeWidth={1} dot={false} name="Perfect Calibration" />
+              <Line type="monotone" dataKey="Full Model" stroke="#2563eb" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="No Calibration" stroke="#ea580c" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="4 3" />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </SectionCard>
+
+        <SectionCard title="Multi-Task Predictions (Top 8 Ads)" description="Side-by-side pCTR, pCVR, Engagement, and Negative predictions per ad">
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={multiTaskData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="name" tick={{ fontSize: 9 }} angle={-10} />
+              <YAxis tick={{ fontSize: 10 }} label={{ value: "%", angle: -90, position: "insideLeft", fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 11 }} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar dataKey="pCTR" fill="#2563eb" name="pCTR %" />
+              <Bar dataKey="pCVR" fill="#16a34a" name="pCVR %" />
+              <Bar dataKey="Engagement" fill="#7c3aed" name="Engagement %" />
+              <Bar dataKey="Negative" fill="#dc2626" name="Negative %" />
+            </BarChart>
+          </ResponsiveContainer>
+        </SectionCard>
+      </div>
+
+      {/* eCPM vs Quality Scatter */}
+      <SectionCard title="eCPM vs Quality Score" description="Each dot is an ad candidate — blue = winner, gray = filtered. Quality floor shown at 0.3.">
+        <ResponsiveContainer width="100%" height={260}>
+          <ScatterChart>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+            <XAxis dataKey="ecpm" name="eCPM" tick={{ fontSize: 10 }} label={{ value: "eCPM ($)", position: "bottom", fontSize: 10 }} />
+            <YAxis dataKey="quality" name="Quality" tick={{ fontSize: 10 }} domain={[0, 1]} label={{ value: "Quality Score", angle: -90, position: "insideLeft", fontSize: 10 }} />
+            <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v, name) => name === "ecpm" ? `$${v}` : v} />
+            <Scatter data={scatterData} fill="#2563eb">
+              {scatterData.map((d, i) => <Cell key={i} fill={d.fill} />)}
+            </Scatter>
+          </ScatterChart>
+        </ResponsiveContainer>
+        <div style={{ display: "flex", gap: 16, marginTop: 6 }}>
+          <div style={{ fontSize: 10, color: "#374151" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: "#2563eb", marginRight: 4 }} />Winner</div>
+          <div style={{ fontSize: 10, color: "#374151" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: "#d1d5db", marginRight: 4 }} />Filtered/Outranked</div>
+        </div>
+      </SectionCard>
+
+      {/* Insights */}
+      <InsightBox type="info" title="Why Calibration Matters" content={`Without calibration, raw model scores systematically over- or under-predict CTR, distorting eCPM ranking. Platt scaling shifts predictions toward observed base rates (${(selectedSegment.avgCTR * 100).toFixed(1)}% for ${selectedSegment.name}), reducing expected calibration error by ~${((variants.no_calibration.calErr - full.calErr) / Math.max(variants.no_calibration.calErr, 0.001) * 100).toFixed(0)}%. At scale, miscalibrated eCPM shifts billions of impressions to overconfident predictions — destroying both revenue and user experience.`} />
+      <InsightBox type="success" title="Multi-Task vs Single-Task" content={`The multi-task architecture improves revenue by $${(variants.no_calibration.totalRev - variants.single_task.totalRev).toFixed(2)} (+${((variants.no_calibration.totalRev / Math.max(variants.single_task.totalRev, 0.01) - 1) * 100).toFixed(1)}%) over single-task pCTR-only prediction. The shared bottom layer provides implicit regularization — the pCVR and pEngagement towers act as auxiliary tasks that improve the learned feature representations. This is especially impactful for sparse conversion signals where pCVR alone would overfit.`} />
+      <InsightBox type="warning" title="Cross-Feature Interaction Effects" content={`Removing embedding cross-features (vertical×segment, vertical×hour, segment×hour) drops revenue by $${(variants.single_task.totalRev - variants.no_cross_features.totalRev).toFixed(2)}. These interactions capture non-linear effects that additive features miss: a finance ad performs very differently in "luxury shoppers" vs "college students", and gaming ads peak at different hours than e-commerce. The dot-product interaction layer between sparse embeddings is what enables this context-dependent ranking.`} />
+    </div>
+  );
+}
+
 // ─── Tab: Model Strategy Framework ────────────────────────────────────
 const FRAMEWORK_VERTICALS = {
   ecommerce: { name: "E-Commerce", weights: { revenue: 0.35, experience: 0.30, health: 0.20, compute: 0.15 }, affinity: { two_tower: 0.7, gbdt: 0.9, dlrm: 1.0, bandit: 0.5 } },
@@ -1506,6 +1886,7 @@ export default function App() {
     { id: "exploration", label: "Explore vs Exploit" },
     { id: "cascade", label: "Cascade Ranking" },
     { id: "ecosystem", label: "Ecosystem Impact" },
+    { id: "ranking", label: "Ads Ranking" },
     { id: "strategy", label: "Model Strategy" },
     { id: "scenario", label: "Finance Scenario" },
     { id: "segments", label: "Segments" },
@@ -1519,7 +1900,7 @@ export default function App() {
         <div style={{ marginBottom: 24 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: "#111827", margin: 0 }}>Ad Auction Simulator</h1>
           <p style={{ fontSize: 12, color: "#6b7280", margin: "4px 0 0" }}>
-            GSP/VCG Engine · Budget Pacing · Quality Feedback · Thompson Sampling · Cascade Ranking · Model Strategy · Finance Scenario · LLM What-If
+            GSP/VCG Engine · Budget Pacing · Quality Feedback · Thompson Sampling · Cascade Ranking · Ads Ranking · Model Strategy · Finance Scenario · LLM What-If
           </p>
         </div>
         <TabBar tabs={tabs} active={tab} onChange={setTab} />
@@ -1529,6 +1910,7 @@ export default function App() {
         {tab === "exploration" && <ExplorationTab />}
         {tab === "cascade" && <CascadeRankingTab advertisers={advertisers} />}
         {tab === "ecosystem" && <EcosystemImpactTab advertisers={advertisers} />}
+        {tab === "ranking" && <AdsRankingTab advertisers={advertisers} />}
         {tab === "strategy" && <ModelStrategyTab />}
         {tab === "scenario" && <FinanceScenarioTab />}
         {tab === "segments" && <SegmentExplorer />}

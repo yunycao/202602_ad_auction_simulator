@@ -9,8 +9,8 @@ Built as a production-grade reference architecture for ad monetization systems, 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    React Frontend                        │
-│  Dashboard · Pacing · Quality · Explore · Cascade         │
-│  Ecosystem · Model Strategy · Finance Scenario · What-If  │
+│  Dashboard · Pacing · Quality · Explore · Cascade · Ads Ranking │
+│  Ecosystem · Model Strategy · Finance Scenario · What-If        │
 └──────────────────────┬──────────────────────────────────┘
                        │ REST API
 ┌──────────────────────▼──────────────────────────────────┐
@@ -56,6 +56,9 @@ Multi-objective model selection framework that jointly optimizes revenue, user e
 
 ### Financial Services Scenario Simulation
 End-to-end scenario comparing 6 recommender algorithms (Two-Tower, GBDT, DLRM, Contextual Bandit, Hybrid Ensemble, Risk-Adjusted Ranker) for financial advertising across 5 sub-verticals (Credit Cards, Personal Loans, Insurance, Investment Platforms, Neobanks). 30-day simulation with trust evolution, risk incident tracking, and domain-specific multi-objective scoring (revenue 30%, quality/trust 35%, efficiency 15%, advertiser satisfaction 20%). Demonstrates that the revenue-maximizing algorithm is NOT optimal for finance — trust-weighted optimization selects a different winner.
+
+### Ads Ranking Model
+Production-style multi-task ranking pipeline simulating the full ranking stack used in large-scale ad platforms. Covers feature engineering (dense features, sparse embeddings, cross-feature interactions via advertiser × segment dot-products), multi-task prediction heads (pCTR, pCVR, pEngagement, pNegative with shared-bottom architecture), Platt scaling calibration (raw scores → calibrated probabilities with ECE tracking), and eCPM-based ranking with quality filtering and diversity injection. Includes a 5-variant ablation study (Full Model, No Calibration, Single-Task, No Cross-Features, Random Baseline) showing incremental revenue contribution of each component via a revenue waterfall, plus SHAP-style feature importance attribution and calibration reliability diagrams.
 
 ### Ecosystem Impact Analysis
 Holistic view of how all mechanisms interact. Understanding these mechanism interactions and their equilibrium properties is what distinguishes systems-level thinking from component-level optimization.
@@ -109,6 +112,8 @@ With the backend running, visit http://localhost:8000/docs for interactive Swagg
 | `/api/framework/lifecycles` | GET | Lifecycle stage definitions |
 | `/api/scenario/finance` | POST | Run 30-day finance algorithm comparison |
 | `/api/scenario/finance/sub-verticals` | GET | Finance sub-vertical definitions |
+| `/api/ads-ranking/simulate` | POST | Full ranking pipeline with ablation study |
+| `/api/ads-ranking/features` | POST | Feature importance analysis |
 | `/api/sweep/reserve` | POST | Reserve price sensitivity analysis |
 | `/api/whatif` | POST | Natural-language what-if query (Claude) |
 
@@ -144,17 +149,18 @@ ad-auction-simulator/
 │   │   │   ├── router.py            # Segment-to-model routing
 │   │   │   ├── bandit.py            # Thompson Sampling multi-armed bandit
 │   │   │   ├── model_framework.py   # Multi-objective model strategy framework
+│   │   │   ├── ads_ranking_model.py  # Multi-task ranking pipeline with calibration
 │   │   │   └── scenario_finance.py  # Financial services scenario simulation
 │   │   ├── llm/
 │   │   │   ├── agent.py             # Claude tool-use agent
 │   │   │   └── prompts.py           # System prompt & tool definitions
 │   │   └── api/
-│   │       └── routes.py            # REST endpoints (23 endpoints)
+│   │       └── routes.py            # REST endpoints (25 endpoints)
 │   ├── tests/
 │   │   └── test_auction.py          # Unit tests
 │   └── requirements.txt
 ├── frontend/
-│   ├── AdAuctionSimulator.jsx       # React app (10 tabs, 1500+ lines)
+│   ├── AdAuctionSimulator.jsx       # React app (11 tabs, 1900+ lines)
 │   ├── src/main.jsx                 # Entry point
 │   ├── index.html
 │   ├── vite.config.js
@@ -180,6 +186,9 @@ ad-auction-simulator/
 
 ### Model Strategy Framework
 "Model selection isn't a static routing decision — it's a multi-objective optimization problem across segment data density, vertical-specific objectives, and advertiser lifecycle stage. My framework jointly optimizes revenue, user experience, advertiser health, and compute cost using vertical-specific weights, then allocates traffic across a portfolio of primary/secondary/exploration models. New advertisers get 2-3x more exploration traffic. Finance verticals favor GBDT precision. Context-aware routing captures 15-40% more revenue vs one-size-fits-all selection."
+
+### Ads Ranking Model
+"The ranking pipeline demonstrates how each component compounds to drive revenue. Starting from a random baseline, adding proper feature engineering (dense + sparse features) lifts revenue significantly. Cross-feature interactions — advertiser × segment embedding dot-products — capture non-linear affinity signals that additive models miss. Multi-task prediction (jointly modeling CTR, CVR, engagement, and negative feedback) provides implicit regularization and data efficiency for sparse conversion signals. Platt scaling calibration ensures predicted probabilities align with observed rates, preventing miscalibrated models from distorting eCPM ranking. The ablation study quantifies each component's incremental contribution, showing ~62% total lift from random to full model."
 
 ### Financial Services Scenario
 "In financial services, the revenue-maximizing algorithm (DLRM) isn't the optimal choice. A 30-day simulation across 5 sub-verticals — credit cards, personal loans, insurance, investment platforms, neobanks — shows that the Risk-Adjusted Ranker wins by maintaining 87% user trust with only 3 risk incidents, while DLRM generates more raw revenue but at 78% trust and 7 risk incidents. With 35% quality weight reflecting the reality that a bad financial ad destroys months of trust-building, the multi-objective scoring function correctly identifies that trust preservation dominates short-term revenue in regulated verticals."
