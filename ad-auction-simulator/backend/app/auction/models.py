@@ -15,6 +15,11 @@ class AuctionMechanism(str, Enum):
     VCG = "VCG"
 
 
+class AllocationAlgorithm(str, Enum):
+    GREEDY = "greedy"
+    OPTIMAL = "optimal"
+
+
 class Advertiser(BaseModel):
     id: str
     name: str
@@ -24,6 +29,7 @@ class Advertiser(BaseModel):
     base_bid: float = Field(ge=0)
     target_segments: list[str] = []
     strategy: BidStrategy = BidStrategy.VALUE_BASED
+    ad_type: str = "link_click"  # video, link_click, impression, carousel, native
 
 
 class UserSegment(BaseModel):

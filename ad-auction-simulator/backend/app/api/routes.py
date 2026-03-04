@@ -44,6 +44,11 @@ from ..recommender.model_framework import (
 )
 from ..recommender.scenario_finance import run_finance_scenario, FINANCE_SUB_VERTICALS
 from ..recommender.ads_ranking_model import run_ablation_study
+from ..auction.ad_types_vcg import (
+    AD_TYPES, POA_BOUNDS, get_all_discount_curves,
+    prepare_candidates, compare_all_mechanisms,
+    run_no_regret_learning, mechanism_result_to_dict, equilibrium_to_dict,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -973,4 +978,83 @@ def ads_ranking_features(req: AdsRankingRequest):
         "hour": req.hour,
         "feature_importance": full.get("feature_importance", {}),
         "top_ads": full.get("ranked_ads", [])[:10],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Ad Types VCG Endpoints (Elzayn et al. 2022)
+# ═══════════════════════════════════════════════════════════════════
+
+class AdTypesCompareRequest(BaseModel):
+    segment_id: str = "young_tech"
+    slots: int = 8
+    reserve_price: float = 0.5
+    seed: int = 42
+
+
+class AdTypesEquilibriumRequest(BaseModel):
+    segment_id: str = "young_tech"
+    allocation: str = "greedy"   # "greedy" or "optimal"
+    pricing: str = "VCG"         # "GSP" or "VCG"
+    slots: int = 8
+    rounds: int = 40
+    reserve_price: float = 0.5
+    seed: int = 42
+
+
+@router.post("/ad-types/compare")
+def ad_types_compare(req: AdTypesCompareRequest):
+    """Run all 4 mechanism combinations and return comparison with PoA."""
+    seg = get_segment(req.segment_id)
+    if not seg:
+        raise HTTPException(404, f"Segment {req.segment_id} not found")
+    candidates = prepare_candidates(
+        [a.model_dump() for a in _advertisers], seg.id, seg.avg_ctr, req.seed
+    )
+    results = compare_all_mechanisms(candidates, req.slots, req.reserve_price)
+    return {
+        "segment_id": req.segment_id,
+        "slots": req.slots,
+        "mechanisms": {k: mechanism_result_to_dict(v) for k, v in results.items()},
+        "poa_bounds": {f"{a}_{p}": b for (a, p), b in POA_BOUNDS.items()},
+        "discount_curves": get_all_discount_curves(req.slots),
+        "ad_types": {k: {"name": v["name"], "description": v["description"]}
+                     for k, v in AD_TYPES.items()},
+    }
+
+
+@router.post("/ad-types/equilibrium")
+def ad_types_equilibrium(req: AdTypesEquilibriumRequest):
+    """Run no-regret learning simulation to find equilibrium bids."""
+    seg = get_segment(req.segment_id)
+    if not seg:
+        raise HTTPException(404, f"Segment {req.segment_id} not found")
+    candidates = prepare_candidates(
+        [a.model_dump() for a in _advertisers], seg.id, seg.avg_ctr, req.seed
+    )
+    # Limit candidates for equilibrium sim (computationally intensive)
+    top_candidates = sorted(candidates, key=lambda c: c.bid * c.quality_score,
+                            reverse=True)[:12]
+    history = run_no_regret_learning(
+        top_candidates, req.allocation, req.pricing,
+        req.slots, req.rounds, req.reserve_price, req.seed,
+    )
+    return {
+        "segment_id": req.segment_id,
+        "mechanism": f"{req.allocation}_{req.pricing}",
+        "rounds": req.rounds,
+        "history": equilibrium_to_dict(history),
+        "candidates": [{"id": c.id, "name": c.name, "ad_type": c.ad_type,
+                        "true_bid": c.bid} for c in top_candidates],
+    }
+
+
+@router.get("/ad-types/discount-curves")
+def ad_types_discount_curves(slots: int = 8):
+    """Return position discount curves for all ad types."""
+    return {
+        "slots": slots,
+        "curves": get_all_discount_curves(slots),
+        "ad_types": {k: {"name": v["name"], "description": v["description"]}
+                     for k, v in AD_TYPES.items()},
     }

@@ -9,8 +9,8 @@ Built as a production-grade reference architecture for ad monetization systems, 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    React Frontend                        │
-│  Dashboard · Pacing · Quality · Explore · Cascade · Ads Ranking │
-│  Ecosystem · Model Strategy · Finance Scenario · What-If        │
+│  Dashboard · Pacing · Quality · Explore · Cascade · Ad Types VCG │
+│  Ads Ranking · Ecosystem · Model Strategy · Finance · What-If    │
 └──────────────────────┬──────────────────────────────────┘
                        │ REST API
 ┌──────────────────────▼──────────────────────────────────┐
@@ -38,6 +38,9 @@ Built as a production-grade reference architecture for ad monetization systems, 
 
 ### Core Auction Mechanics
 GSP and VCG auction implementations with quality-weighted effective bids, reserve prices, and externality-based pricing. Revenue vs welfare tradeoff analysis across 8 user segments.
+
+### Ad Types VCG Mechanism
+Implements the semi-separable position auction model from "Equilibria in Auctions with Ad Types" (Elzayn, Colini-Baldeschi, Lan, Schrijvers — WebConf 2022). Each ad has a publicly known type (video, link-click, impression, carousel, native) with its own geometric position discount curve δ^s_τ = base × decay^(s-1). Runs all 4 mechanism combinations — (Greedy/Optimal) × (GSP/VCG) — with VCG externality pricing, max-weight bipartite matching for optimal allocation, empirical Price of Anarchy analysis (vs theoretical bounds from Table 1), and no-regret learning (Exponential Weights) equilibrium simulation showing bidder convergence to coarse correlated equilibria.
 
 ### Budget Pacing with Adversarial Robustness
 24-hour budget pacing simulation with bid shading and adversarial gaming analysis. Demonstrates how budget depletion creates temporal scarcity dynamics, but also how sophisticated "whale" advertisers can detect reserve price patterns and shift bids to exploit cheaper windows — eroding 5-15% of revenue. Includes mitigation strategies: randomized reserve perturbation, personalized floors, and minimum spend constraints.
@@ -112,6 +115,9 @@ With the backend running, visit http://localhost:8000/docs for interactive Swagg
 | `/api/framework/lifecycles` | GET | Lifecycle stage definitions |
 | `/api/scenario/finance` | POST | Run 30-day finance algorithm comparison |
 | `/api/scenario/finance/sub-verticals` | GET | Finance sub-vertical definitions |
+| `/api/ad-types/compare` | POST | Run all 4 mechanism combinations with PoA |
+| `/api/ad-types/equilibrium` | POST | No-regret learning equilibrium simulation |
+| `/api/ad-types/discount-curves` | GET | Position discount curves for all ad types |
 | `/api/ads-ranking/simulate` | POST | Full ranking pipeline with ablation study |
 | `/api/ads-ranking/features` | POST | Feature importance analysis |
 | `/api/sweep/reserve` | POST | Reserve price sensitivity analysis |
@@ -151,16 +157,22 @@ ad-auction-simulator/
 │   │   │   ├── model_framework.py   # Multi-objective model strategy framework
 │   │   │   ├── ads_ranking_model.py  # Multi-task ranking pipeline with calibration
 │   │   │   └── scenario_finance.py  # Financial services scenario simulation
+│   │   ├── auction/
+│   │   │   ├── engine.py            # Core GSP/VCG auction mechanisms
+│   │   │   ├── models.py           # Pydantic models with ad type support
+│   │   │   ├── ad_types_vcg.py     # Semi-separable auction with 4 mechanisms
+│   │   │   ├── cascade.py          # 3-stage cascade ranking pipeline
+│   │   │   └── metrics.py          # Revenue, welfare, efficiency metrics
 │   │   ├── llm/
 │   │   │   ├── agent.py             # Claude tool-use agent
 │   │   │   └── prompts.py           # System prompt & tool definitions
 │   │   └── api/
-│   │       └── routes.py            # REST endpoints (25 endpoints)
+│   │       └── routes.py            # REST endpoints (28 endpoints)
 │   ├── tests/
 │   │   └── test_auction.py          # Unit tests
 │   └── requirements.txt
 ├── frontend/
-│   ├── AdAuctionSimulator.jsx       # React app (11 tabs, 1900+ lines)
+│   ├── AdAuctionSimulator.jsx       # React app (12 tabs, 2100+ lines)
 │   ├── src/main.jsx                 # Entry point
 │   ├── index.html
 │   ├── vite.config.js
@@ -186,6 +198,9 @@ ad-auction-simulator/
 
 ### Model Strategy Framework
 "Model selection isn't a static routing decision — it's a multi-objective optimization problem across segment data density, vertical-specific objectives, and advertiser lifecycle stage. My framework jointly optimizes revenue, user experience, advertiser health, and compute cost using vertical-specific weights, then allocates traffic across a portfolio of primary/secondary/exploration models. New advertisers get 2-3x more exploration traffic. Finance verticals favor GBDT precision. Context-aware routing captures 15-40% more revenue vs one-size-fits-all selection."
+
+### Ad Types VCG Mechanism
+"Standard position auctions assume separability — all ads share the same position discount curve. But video ads lose 18% CTR per position while impression ads lose only 7%. This semi-separable model from Elzayn et al. (WebConf 2022) introduces type-specific discount curves where CTR = δ^s_τ × β_i. Greedy allocation is no longer optimal — it requires max-weight bipartite matching. We implement all 4 mechanism combinations and show that VCG with optimal allocation achieves PoA of 1.0 (theoretical optimum), while the no-regret learning simulation confirms bidders converge to equilibria that perform significantly better than worst-case bounds."
 
 ### Ads Ranking Model
 "The ranking pipeline demonstrates how each component compounds to drive revenue. Starting from a random baseline, adding proper feature engineering (dense + sparse features) lifts revenue significantly. Cross-feature interactions — advertiser × segment embedding dot-products — capture non-linear affinity signals that additive models miss. Multi-task prediction (jointly modeling CTR, CVR, engagement, and negative feedback) provides implicit regularization and data efficiency for sparse conversion signals. Platt scaling calibration ensures predicted probabilities align with observed rates, preventing miscalibrated models from distorting eCPM ranking. The ablation study quantifies each component's incremental contribution, showing ~62% total lift from random to full model."
