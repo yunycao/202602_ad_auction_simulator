@@ -339,7 +339,7 @@ function getModelRecommendation(segment) {
 }
 
 function runWhatIf(advertisers, params) {
-  const { reservePrice = 0.5, slots = 5, mechanism = "GSP", segmentId = null, qualityFloor = 0 } = params;
+  const { reservePrice = 0.5, slots = 5, mechanism = "VCG", segmentId = null, qualityFloor = 0 } = params;
   const filteredAds = advertisers.filter(a => a.qualityScore >= qualityFloor);
   const segments = segmentId ? SEGMENTS.filter(s => s.id === segmentId) : SEGMENTS;
   const auctionFn = mechanism === "VCG" ? runVCGAuction : runGSPAuction;
@@ -404,16 +404,16 @@ function InsightBox({ title, content, type = "info" }) {
 
 // ─── Tab: Auction Dashboard ──────────────────────────────────────────
 function AuctionDashboard({ advertisers }) {
-  const baseline = useMemo(() => runWhatIf(advertisers, { reservePrice: 0.5, slots: 5, mechanism: "GSP" }), [advertisers]);
+  const baseline = useMemo(() => runWhatIf(advertisers, { reservePrice: 0.5, slots: 5, mechanism: "VCG" }), [advertisers]);
   const segmentRevenue = useMemo(() =>
     SEGMENTS.map(seg => {
-      const gsp = runGSPAuction(advertisers, seg); const vcg = runVCGAuction(advertisers, seg);
-      return { name: seg.name.split(' ').slice(0, 2).join(' '), GSP: gsp.totalRevenue, VCG: vcg.totalRevenue, eligible: gsp.eligible };
+      const vcg = runVCGAuction(advertisers, seg); const gsp = runGSPAuction(advertisers, seg);
+      return { name: seg.name.split(' ').slice(0, 2).join(' '), VCG: vcg.totalRevenue, GSP: gsp.totalRevenue, eligible: vcg.eligible };
     }), [advertisers]);
   const reserveSweep = useMemo(() =>
     Array.from({ length: 20 }, (_, i) => {
       const rp = 0.1 + i * 0.25;
-      const r = runWhatIf(advertisers, { reservePrice: rp, slots: 5, mechanism: "GSP" });
+      const r = runWhatIf(advertisers, { reservePrice: rp, slots: 5, mechanism: "VCG" });
       return { reservePrice: +rp.toFixed(2), revenue: r.totalRevenue, rpm: r.avgRPM };
     }), [advertisers]);
 
@@ -426,12 +426,12 @@ function AuctionDashboard({ advertisers }) {
         <MetricCard label="Advertisers" value={advertisers.length} subtext={`${VERTICALS.length} verticals`} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
-        <SectionCard title="Revenue by Segment: GSP vs VCG">
+        <SectionCard title="Revenue by Segment: VCG vs GSP">
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={segmentRevenue}><CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="name" tick={{ fontSize: 10 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip formatter={v => `$${v.toFixed(2)}`} /><Legend /><Bar dataKey="GSP" fill="#2563eb" radius={[4,4,0,0]} /><Bar dataKey="VCG" fill="#7c3aed" radius={[4,4,0,0]} /></BarChart>
+            <BarChart data={segmentRevenue}><CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="name" tick={{ fontSize: 10 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip formatter={v => `$${v.toFixed(2)}`} /><Legend /><Bar dataKey="VCG" fill="#7c3aed" radius={[4,4,0,0]} /><Bar dataKey="GSP" fill="#2563eb" radius={[4,4,0,0]} /></BarChart>
           </ResponsiveContainer>
         </SectionCard>
-        <SectionCard title="Revenue vs Reserve Price (GSP)">
+        <SectionCard title="Revenue vs Reserve Price (VCG)">
           <ResponsiveContainer width="100%" height={260}>
             <AreaChart data={reserveSweep}><defs><linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#2563eb" stopOpacity={0.15} /><stop offset="95%" stopColor="#2563eb" stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" /><XAxis dataKey="reservePrice" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip formatter={v => `$${v.toFixed(2)}`} /><Area type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={2} fill="url(#revGrad)" /></AreaChart>
           </ResponsiveContainer>
@@ -441,7 +441,7 @@ function AuctionDashboard({ advertisers }) {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ borderBottom: "2px solid #e5e7eb" }}>{["Slot","Advertiser","Vertical","Bid","Quality","Eff. Bid","CPC","pCTR"].map(h => <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: "#6b7280", fontWeight: 600, fontSize: 10, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
-            <tbody>{runGSPAuction(advertisers, SEGMENTS[0]).winners.map((w, i) => <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}><td style={{ padding: "8px 10px", fontWeight: 600 }}>#{w.slot}</td><td style={{ padding: "8px 10px" }}>{w.name}</td><td style={{ padding: "8px 10px" }}><span style={{ background: "#eff6ff", color: "#1d4ed8", padding: "2px 8px", borderRadius: 4, fontSize: 10 }}>{w.vertical}</span></td><td style={{ padding: "8px 10px", fontFamily: "monospace" }}>${w.baseBid.toFixed(2)}</td><td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{w.qualityScore.toFixed(3)}</td><td style={{ padding: "8px 10px", fontFamily: "monospace", fontWeight: 600 }}>${w.effectiveBid.toFixed(4)}</td><td style={{ padding: "8px 10px", fontFamily: "monospace", color: "#16a34a" }}>${w.cpc}</td><td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{(w.pCTR * 100).toFixed(2)}%</td></tr>)}</tbody>
+            <tbody>{runVCGAuction(advertisers, SEGMENTS[0]).winners.map((w, i) => <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}><td style={{ padding: "8px 10px", fontWeight: 600 }}>#{w.slot}</td><td style={{ padding: "8px 10px" }}>{w.name}</td><td style={{ padding: "8px 10px" }}><span style={{ background: "#eff6ff", color: "#1d4ed8", padding: "2px 8px", borderRadius: 4, fontSize: 10 }}>{w.vertical}</span></td><td style={{ padding: "8px 10px", fontFamily: "monospace" }}>${w.baseBid.toFixed(2)}</td><td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{w.qualityScore.toFixed(3)}</td><td style={{ padding: "8px 10px", fontFamily: "monospace", fontWeight: 600 }}>${w.effectiveBid.toFixed(4)}</td><td style={{ padding: "8px 10px", fontFamily: "monospace", color: "#16a34a" }}>${w.cpc}</td><td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{(w.pCTR * 100).toFixed(2)}%</td></tr>)}</tbody>
           </table>
         </div>
       </SectionCard>
@@ -657,7 +657,7 @@ function CascadeRankingTab({ advertisers }) {
           <div style={{ fontSize: 18, color: "#9ca3af" }}>→</div>
           <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "12px 16px", minWidth: 120, textAlign: "center" }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Auction</div>
-            <div style={{ fontSize: 10, color: "#6b7280" }}>GSP</div>
+            <div style={{ fontSize: 10, color: "#6b7280" }}>VCG</div>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#111827", margin: "4px 0" }}>{data.cascade.winners} winners</div>
             <div style={{ fontSize: 10, color: "#16a34a", fontWeight: 600 }}>${data.cascade.revenue.toFixed(0)}</div>
           </div>
@@ -859,7 +859,7 @@ function SegmentExplorer() {
 // ─── Tab: What-If Chat (original, enhanced) ──────────────────────────
 function WhatIfChat({ advertisers }) {
   const [messages, setMessages] = useState([
-    { role: "assistant", content: `Welcome to the **Ad Auction What-If Analyzer** (v2.0).\n\nI can simulate and analyze:\n- **Budget Pacing**: "Show me how budget depletion affects reserves"\n- **Quality Feedback**: "What happens to quality scores over 10 rounds?"\n- **Exploration vs Exploitation**: "How much regret from model exploration?"\n- **Cascade vs Single-Stage**: "Compare cascade ranking efficiency"\n- **Reserve Prices**: "What if reserve price is $2.50?"\n- **GSP vs VCG**: "Compare auction mechanisms"\n\nIn the full version, this is powered by Claude API with tool-use.` }
+    { role: "assistant", content: `Welcome to the **Ad Auction What-If Analyzer** (v2.0).\n\nI can simulate and analyze:\n- **Budget Pacing**: "Show me how budget depletion affects reserves"\n- **Quality Feedback**: "What happens to quality scores over 10 rounds?"\n- **Exploration vs Exploitation**: "How much regret from model exploration?"\n- **Cascade vs Single-Stage**: "Compare cascade ranking efficiency"\n- **Reserve Prices**: "What if reserve price is $2.50?"\n- **VCG vs GSP**: "Compare auction mechanisms"\n\nIn the full version, this is powered by Claude API with tool-use.` }
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -869,7 +869,7 @@ function WhatIfChat({ advertisers }) {
 
   const processQuery = useCallback((query) => {
     const q = query.toLowerCase();
-    const baseline = runWhatIf(advertisers, { reservePrice: 0.5, slots: 5, mechanism: "GSP" });
+    const baseline = runWhatIf(advertisers, { reservePrice: 0.5, slots: 5, mechanism: "VCG" });
 
     if (q.includes("pacing") || q.includes("budget") || q.includes("deplet")) {
       const hourly = simulatePacing(advertisers, SEGMENTS[0]);
@@ -893,7 +893,7 @@ function WhatIfChat({ advertisers }) {
     if (q.includes("reserve") || q.includes("floor price")) {
       const match = query.match(/\$?([\d.]+)/);
       const rp = match ? parseFloat(match[1]) : 2.0;
-      const scenario = runWhatIf(advertisers, { reservePrice: rp, slots: 5, mechanism: "GSP" });
+      const scenario = runWhatIf(advertisers, { reservePrice: rp, slots: 5, mechanism: "VCG" });
       const delta = scenario.totalRevenue - baseline.totalRevenue;
       const pct = ((delta / baseline.totalRevenue) * 100).toFixed(1);
       return `## Reserve Price Analysis\n\nChanging from $0.50 → $${rp}:\n\n**Revenue:** $${baseline.totalRevenue.toLocaleString()} → $${scenario.totalRevenue.toLocaleString()} (${delta > 0 ? '+' : ''}${pct}%)\n\n${delta > 0 ? 'Higher reserves filter low-quality bids. Watch for fill rate drops in thin segments.' : 'Lower reserves increase fill but reduce CPCs. Consider segment-specific reserves.'}\n\n**Key insight:** Reserve prices are set per-auction using ML models. The revenue-optimal reserve ≠ welfare-optimal reserve — this tension is central to monetization strategy.`;
@@ -902,9 +902,9 @@ function WhatIfChat({ advertisers }) {
       const gsp = runWhatIf(advertisers, { reservePrice: 0.5, slots: 5, mechanism: "GSP" });
       const vcg = runWhatIf(advertisers, { reservePrice: 0.5, slots: 5, mechanism: "VCG" });
       const delta = ((vcg.totalRevenue - gsp.totalRevenue) / gsp.totalRevenue * 100).toFixed(1);
-      return `## GSP vs VCG Comparison\n\n| Metric | GSP | VCG |\n|--------|-----|-----|\n| Revenue | $${gsp.totalRevenue.toLocaleString()} | $${vcg.totalRevenue.toLocaleString()} |\n| RPM | $${gsp.avgRPM} | $${vcg.avgRPM} |\n\n**Revenue delta:** ${delta}% with VCG\n\n**Why GSP persists:** (1) Higher revenue from non-truthful bidding, (2) Simpler for advertisers to understand, (3) Equilibrium stability in repeated auctions.\n\n**Staff insight:** VCG charges externality prices → truthful bidding but lower revenue. The real-world hybrid uses GSP with VCG-inspired elements (quality adjustments) to balance revenue and efficiency.`;
+      return `## VCG vs GSP Comparison\n\n| Metric | VCG | GSP |\n|--------|-----|-----|\n| Revenue | $${vcg.totalRevenue.toLocaleString()} | $${gsp.totalRevenue.toLocaleString()} |\n| RPM | $${vcg.avgRPM} | $${gsp.avgRPM} |\n\n**Revenue delta:** ${delta}% with VCG\n\n**Why VCG is the production choice for feed-based platforms:**\n- Truthful bidding is a dominant strategy → eliminates adversarial bid shading complexity\n- Externality pricing ensures ads only win when their value exceeds the opportunity cost of displacing organic content\n- Welfare maximization aligns platform incentives with user experience and long-term marketplace health\n- Simplifies the advertiser ecosystem: no strategic behavior modeling required\n\n**Key insight:** The ~6-7% revenue gap vs GSP is the cost of a healthier marketplace. GSP's extra revenue comes from non-truthful dynamics that create adversarial complexity, degrade user experience in feed contexts, and require expensive bid optimization infrastructure. VCG's welfare-maximizing property is the right foundation for platforms optimizing time-on-platform rather than per-auction revenue.`;
     }
-    return `I can help analyze auction dynamics in depth. Try:\n\n1. **"Show budget pacing effects"** — temporal scarcity dynamics\n2. **"Quality feedback over 10 rounds"** — advertiser selection\n3. **"How much exploration regret?"** — bandit tradeoffs\n4. **"Cascade vs single-stage efficiency"** — compute optimization\n5. **"Reserve price $2.50"** — pricing analysis\n6. **"Compare GSP vs VCG"** — mechanism design`;
+    return `I can help analyze auction dynamics in depth. Try:\n\n1. **"Show budget pacing effects"** — temporal scarcity dynamics\n2. **"Quality feedback over 10 rounds"** — advertiser selection\n3. **"How much exploration regret?"** — bandit tradeoffs\n4. **"Cascade vs single-stage efficiency"** — compute optimization\n5. **"Reserve price $2.50"** — pricing analysis\n6. **"Compare VCG vs GSP"** — mechanism design`;
   }, [advertisers]);
 
   const handleSend = () => {
@@ -917,7 +917,7 @@ function WhatIfChat({ advertisers }) {
 
   const renderMarkdown = (text) => text.replace(/## (.*)/g, '<h3 style="font-size:15px;font-weight:700;color:#111827;margin:12px 0 8px">$1</h3>').replace(/### (.*)/g, '<h4 style="font-size:13px;font-weight:600;color:#374151;margin:10px 0 6px">$1</h4>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n\n/g, '<br/><br/>').replace(/\n- (.*)/g, '<br/>• $1').replace(/\|(.+)\|/g, (match) => { const cells = match.split('|').filter(c => c.trim()); if (cells.every(c => c.trim().match(/^[-]+$/))) return ''; return '<div style="display:flex;gap:16px;font-size:12px;font-family:monospace;padding:2px 0">' + cells.map(c => `<span style="min-width:80px">${c.trim()}</span>`).join('') + '</div>'; });
 
-  const suggestions = ["Show budget pacing effects", "Quality feedback analysis", "How much exploration regret?", "Cascade vs single-stage", "Reserve price $2.50", "Compare GSP vs VCG"];
+  const suggestions = ["Show budget pacing effects", "Quality feedback analysis", "How much exploration regret?", "Cascade vs single-stage", "Reserve price $2.50", "Compare VCG vs GSP"];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: 600 }}>
@@ -2289,7 +2289,7 @@ export default function App() {
         <div style={{ marginBottom: 24 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: "#111827", margin: 0 }}>Ad Auction Simulator</h1>
           <p style={{ fontSize: 12, color: "#6b7280", margin: "4px 0 0" }}>
-            GSP/VCG Engine · Ad Types VCG · Budget Pacing · Quality Feedback · Thompson Sampling · Cascade Ranking · Ads Ranking · Model Strategy · Finance Scenario · LLM What-If
+            VCG Engine · Ad Types VCG · Budget Pacing · Quality Feedback · Thompson Sampling · Cascade Ranking · Ads Ranking · Model Strategy · Finance Scenario · LLM What-If
           </p>
         </div>
         <TabBar tabs={tabs} active={tab} onChange={setTab} />

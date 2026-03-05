@@ -79,7 +79,7 @@ class AuctionResult(BaseModel):
 class WhatIfParams(BaseModel):
     reserve_price: float = 0.5
     slots: int = 5
-    mechanism: AuctionMechanism = AuctionMechanism.GSP
+    mechanism: AuctionMechanism = AuctionMechanism.VCG
     segment_id: Optional[str] = None
     quality_floor: float = 0.0
     bid_multiplier: float = 1.0

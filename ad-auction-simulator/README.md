@@ -1,8 +1,8 @@
 # Ad Auction Simulator: Balancing Multi-Objective Auction Dynamics with Adaptive Model Orchestration
 
-A full-stack simulation of a large-scale ad auction system featuring GSP/VCG mechanisms, budget pacing with adversarial robustness, quality feedback loops, Thompson Sampling exploration-exploitation, cascade ranking with latency-to-conversion analysis, multi-objective model strategy framework, and Claude-powered natural-language what-if analysis.
+A full-stack simulation of a large-scale ad auction system built on VCG (Vickrey-Clarke-Groves) as the production auction mechanism for feed-based platforms, with GSP as a legacy comparison baseline. Features budget pacing with adversarial robustness, quality feedback loops, Thompson Sampling exploration-exploitation, cascade ranking with latency-to-conversion analysis, multi-objective model strategy framework, and Claude-powered natural-language what-if analysis.
 
-Built as a production-grade reference architecture for ad monetization systems, covering auction theory, adversarial dynamics, and system equilibrium.
+Built as a production-grade reference architecture for ad monetization systems, covering auction theory, adversarial dynamics, and system equilibrium. VCG is chosen as the default mechanism because truthful bidding simplifies the advertiser ecosystem, externality pricing ensures ads only appear when their value exceeds organic content opportunity cost, and welfare maximization aligns platform incentives with user experience.
 
 ## Architecture
 
@@ -19,7 +19,7 @@ Built as a production-grade reference architecture for ad monetization systems, 
 │  ┌──────────────┐  ┌────────────────┐  ┌─────────────┐ │
 │  │ Auction       │  │ Recommender    │  │ Budget      │ │
 │  │ Engine        │  │ Simulator      │  │ Pacing      │ │
-│  │ GSP · VCG     │  │ 4 model types  │  │ Bid shading │ │
+│  │ VCG (prod)    │  │ 4 model types  │  │ Bid shading │ │
 │  └──────────────┘  └────────────────┘  └─────────────┘ │
 │  ┌──────────────┐  ┌────────────────┐  ┌─────────────┐ │
 │  │ Quality       │  │ Thompson       │  │ Cascade     │ │
@@ -37,7 +37,7 @@ Built as a production-grade reference architecture for ad monetization systems, 
 ## Key Capabilities
 
 ### Core Auction Mechanics
-GSP and VCG auction implementations with quality-weighted effective bids, reserve prices, and externality-based pricing. Revenue vs welfare tradeoff analysis across 8 user segments.
+VCG-first auction engine with GSP as a comparison baseline. VCG uses externality-based pricing where each winner pays the harm their presence causes to other bidders — making truthful bidding a dominant strategy. Quality-weighted effective bids, reserve prices, and revenue vs welfare tradeoff analysis across 8 user segments demonstrate why VCG is the right production mechanism for feed-based platforms where ads compete against organic content.
 
 ### Ad Types VCG Mechanism
 Implements the semi-separable position auction model from "Equilibria in Auctions with Ad Types" (Elzayn, Colini-Baldeschi, Lan, Schrijvers — WebConf 2022). Each ad has a publicly known type (video, link-click, impression, carousel, native) with its own geometric position discount curve δ^s_τ = base × decay^(s-1). Runs all 4 mechanism combinations — (Greedy/Optimal) × (GSP/VCG) — with VCG externality pricing, max-weight bipartite matching for optimal allocation, empirical Price of Anarchy analysis (vs theoretical bounds from Table 1), and no-regret learning (Exponential Weights) equilibrium simulation showing bidder convergence to coarse correlated equilibria.

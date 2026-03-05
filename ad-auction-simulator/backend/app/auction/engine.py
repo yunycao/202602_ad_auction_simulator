@@ -1,15 +1,19 @@
 """
-Core auction engine implementing GSP and VCG mechanisms.
+Core auction engine implementing VCG and GSP mechanisms.
 
-GSP (Generalized Second-Price): The standard industry auction mechanism.
+VCG (Vickrey-Clarke-Groves): The production auction mechanism for feed-based platforms.
+  - Truthful mechanism: bidding true value is a dominant strategy
+  - Each winner pays the externality (harm) their presence causes to others
+  - Maximizes social welfare — ads only win when value exceeds opportunity cost
+  - Optimal for feed environments where ads compete against organic content
+  - Simplifies advertiser ecosystem: no strategic bid shading required
+
+GSP (Generalized Second-Price): Legacy search-based auction mechanism.
   - Rank by effective_bid = bid * quality_score
   - Charge next-highest effective bid / quality_score (second-price per slot)
   - NOT truthful: bidders shade bids in equilibrium
-
-VCG (Vickrey-Clarke-Groves): Theoretical benchmark.
-  - Truthful mechanism charging externality-based prices
-  - Each winner pays the harm their presence causes to other bidders
-  - Lower revenue but maximizes social welfare
+  - Yields ~6-7% higher revenue from non-truthful dynamics, but creates
+    adversarial complexity and degrades user experience in feed contexts
 """
 from typing import Optional
 from .models import (
@@ -201,7 +205,7 @@ def run_vcg_auction(
 def run_auction(
     advertisers: list[Advertiser],
     segment: UserSegment,
-    mechanism: AuctionMechanism = AuctionMechanism.GSP,
+    mechanism: AuctionMechanism = AuctionMechanism.VCG,
     slots: int = 5,
     reserve_price: float = 0.5,
 ) -> AuctionResult:
